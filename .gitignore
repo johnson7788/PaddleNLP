@@ -122,3 +122,4 @@ FETCH_HEAD
 
 # vscode
 .vscode
+examples/information_extraction/DuIE/data/*.json
