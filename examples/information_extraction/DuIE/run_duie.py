@@ -210,6 +210,7 @@ def do_train():
         tic_epoch = time.time()
         model.train()
         for step, batch in enumerate(train_data_loader):
+            print(f"训练第{step}个step")
             input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
             logits = model(input_ids=input_ids)
             mask = (input_ids != 0).logical_and((input_ids != 1)).logical_and(

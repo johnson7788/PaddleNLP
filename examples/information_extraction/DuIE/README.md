@@ -96,7 +96,13 @@ test_dataset = DuIEDataset.from_file(
 启动训练：
 ```shell
 sh train.sh
+python -m paddle.distributed.launch --gpus 0 run_duie.py --device gpu --seed 42 --do_train --data_path ./data --max_seq_length 128 --batch_size 8 --num_train_epochs 12 --learning_rate 2e-5 --warmup_ratio 0.06 --output_dir ./checkpoints
+# 不使用GPU
+run_duie.py --device cpu --seed 42 --do_train --data_path ./data --max_seq_length 128 --batch_size 8 --num_train_epochs 12 --learning_rate 2e-5 --warmup_ratio 0.06 --output_dir ./checkpoints
+
 ```
+labels 是 [batch_size, seq_len, labels_num]  其中每一行是预测一对实体和关系，第一个labels，即cls预测关系，其它是ner格式预测实体类别
+
 
 在训练过程中，模型保存在当前目录checkpoints文件夹下。同时在训练的同时使用官方评测脚本进行评估，输出P/R/F1指标。
 在验证集上F1可以达到69.42。
