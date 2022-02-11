@@ -71,7 +71,11 @@ def decoding(example_batch, id2spo, logits_batch, seq_len_batch,
         flatten_predictions = []
         for layer_1 in predictions:
             for layer_2 in layer_1:
-                flatten_predictions.append(layer_2[0])
+                if layer_2:
+                    # 有的时候里面没有预测到位1的内容，都是为0的
+                    flatten_predictions.append(layer_2[0])
+                else:
+                    flatten_predictions.append(0)
         subject_id_list = []
         for cls_label in list(set(flatten_predictions)):
             if 1 < cls_label <= 56 and (cls_label + 55) in flatten_predictions:

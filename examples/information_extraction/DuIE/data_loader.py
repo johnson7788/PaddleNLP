@@ -19,11 +19,9 @@ from typing import Optional, List, Union, Dict
 from dataclasses import dataclass
 
 import numpy as np
-import paddle
+import torch
 from tqdm import tqdm
-
-from paddlenlp.transformers import ErnieTokenizer
-from paddlenlp.utils.log import logger
+from transformers import BertTokenizer
 
 from extract_chinese_and_punct import ChineseAndPunctuationExtractor
 
@@ -123,7 +121,7 @@ def parse_label(spo_list, label_map, tokens, tokenizer):
 
 def convert_example_to_feature(
         example,
-        tokenizer: ErnieTokenizer,
+        tokenizer: BertTokenizer,
         chineseandpunctuationextractor: ChineseAndPunctuationExtractor,
         label_map,
         max_length: Optional[int]=512,
@@ -202,7 +200,7 @@ def convert_example_to_feature(
         labels=np.array(labels), )
 
 
-class DuIEDataset(paddle.io.Dataset):
+class DuIEDataset(torch.utils.data.Dataset):
     def __init__(self,
                  data,
                  label_map,
@@ -222,7 +220,9 @@ class DuIEDataset(paddle.io.Dataset):
         return len(self.data)
 
     def __getitem__(self, item):
-
+        """
+        param: item: int
+        """
         example = json.loads(self.data[item])
         input_feature = convert_example_to_feature(
             example, self.tokenizer, self.chn_punc_extractor, self.label_map,
@@ -244,7 +244,7 @@ class DuIEDataset(paddle.io.Dataset):
     @classmethod
     def from_file(cls,
                   file_path: Union[str, os.PathLike],
-                  tokenizer: ErnieTokenizer,
+                  tokenizer: BertTokenizer,
                   max_length: Optional[int]=512,
                   pad_to_max_length: Optional[bool]=None):
         assert os.path.exists(file_path) and os.path.isfile(
@@ -282,13 +282,13 @@ class DataCollator:
 
 
 if __name__ == "__main__":
-    tokenizer = ErnieTokenizer.from_pretrained("ernie-1.0")
+    tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
     d = DuIEDataset.from_file("./data/train_data.json", tokenizer)
-    sampler = paddle.io.RandomSampler(data_source=d)
-    batch_sampler = paddle.io.BatchSampler(sampler=sampler, batch_size=2)
+    sampler = torch.utils.data.RandomSampler(data_source=d)
+    batch_sampler = torch.utils.data.BatchSampler(sampler=sampler, batch_size=2)
 
     collator = DataCollator()
-    loader = paddle.io.DataLoader(
+    loader = torch.utils.data.DataLoader(
         dataset=d,
         batch_sampler=batch_sampler,
         collate_fn=collator,

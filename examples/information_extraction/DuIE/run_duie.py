@@ -26,12 +26,12 @@ from tqdm import tqdm
 import sys
 
 import numpy as np
-import paddle
-import paddle.nn as nn
-import paddle.nn.functional as F
-from paddle.io import DataLoader
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
-from paddlenlp.transformers import ErnieTokenizer, ErnieForTokenClassification, LinearDecayWithWarmup
+from transformers import BertTokenizer, BertForTokenClassification, get_linear_schedule_with_warmup
 
 from data_loader import DuIEDataset, DataCollator
 from utils import decoding, find_entity, get_precision_recall_f1, write_prediction_results
@@ -52,21 +52,21 @@ parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight deca
 parser.add_argument("--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform.")
 parser.add_argument("--warmup_ratio", default=0, type=float, help="Linear warmup over warmup_ratio * total_steps.")
 parser.add_argument("--seed", default=42, type=int, help="random seed for initialization")
-parser.add_argument('--device', choices=['cpu', 'gpu'], default="gpu", help="Select which device to train model, defaults to gpu.")
+parser.add_argument('--device', choices=['cpu', 'cuda'], default="cuda", help="Select which device to train model, defaults to gpu.")
 args = parser.parse_args()
 # yapf: enable
 
 
-class BCELossForDuIE(nn.Layer):
+class BCELossForDuIE(nn.Module):
     def __init__(self, ):
         super(BCELossForDuIE, self).__init__()
         self.criterion = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, logits, labels, mask):
         loss = self.criterion(logits, labels)
-        mask = paddle.cast(mask, 'float32')
+        mask = mask.type(torch.float32)
         loss = loss * mask.unsqueeze(-1)
-        loss = paddle.sum(loss.mean(axis=2), axis=1) / paddle.sum(mask, axis=1)
+        loss = torch.sum(loss.mean(axis=2), axis=1) / torch.sum(mask, axis=1)
         loss = loss.mean()
         return loss
 
@@ -75,10 +75,10 @@ def set_random_seed(seed):
     """sets random seed"""
     random.seed(seed)
     np.random.seed(seed)
-    paddle.seed(seed)
+    torch.seed(seed)
 
 
-@paddle.no_grad()
+@torch.no_grad()
 def evaluate(model, criterion, data_loader, file_path, mode):
     """
     mode eval:
@@ -103,17 +103,24 @@ def evaluate(model, criterion, data_loader, file_path, mode):
     current_idx = 0
     for batch in tqdm(data_loader, total=len(data_loader)):
         eval_steps += 1
-        input_ids, seq_len, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
-        logits = model(input_ids=input_ids)
+        input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
+        if args.device == "cuda":
+            input_ids = torch.tensor(input_ids, dtype=torch.int64, device="cuda:0")
+            seq_lens = torch.tensor(seq_lens, dtype=torch.int64, device="cuda:0")
+            tok_to_orig_start_index = torch.tensor(tok_to_orig_start_index, dtype=torch.int64, device="cuda:0")
+            tok_to_orig_end_index = torch.tensor(tok_to_orig_end_index, dtype=torch.int64, device="cuda:0")
+            labels = torch.tensor(labels, dtype=torch.float32, device="cuda:0")
+        output = model(input_ids=input_ids)
+        logits = output['logits']
         mask = (input_ids != 0).logical_and((input_ids != 1)).logical_and(
             (input_ids != 2))
         loss = criterion(logits, labels, mask)
-        loss_all += loss.numpy().item()
+        loss_all += loss.cpu().item()
         probs = F.sigmoid(logits)
-        logits_batch = probs.numpy()
-        seq_len_batch = seq_len.numpy()
-        tok_to_orig_start_index_batch = tok_to_orig_start_index.numpy()
-        tok_to_orig_end_index_batch = tok_to_orig_end_index.numpy()
+        logits_batch = probs.cpu()
+        seq_len_batch = seq_lens.cpu()
+        tok_to_orig_start_index_batch = tok_to_orig_start_index.cpu()
+        tok_to_orig_end_index_batch = tok_to_orig_end_index.cpu()
         formatted_outputs.extend(
             decoding(example_all[current_idx:current_idx + len(logits)], id2spo,
                      logits_batch, seq_len_batch, tok_to_orig_start_index_batch,
@@ -140,10 +147,11 @@ def evaluate(model, criterion, data_loader, file_path, mode):
 
 
 def do_train():
-    paddle.set_device(args.device)
-    rank = paddle.distributed.get_rank()
-    if paddle.distributed.get_world_size() > 1:
-        paddle.distributed.init_parallel_env()
+    torch.device(args.device)
+    # rank = torch.distributed.get_rank()
+    rank= 0
+    # if torch.distributed.get_world_size() > 1:
+    #     torch.distributed.init_parallel_env()
 
     # Reads label_map.
     label_map_path = os.path.join(args.data_path, "predicate2id.json")
@@ -154,78 +162,83 @@ def do_train():
     num_classes = (len(label_map.keys()) - 2) * 2 + 2
 
     # Loads pretrained model ERNIE
-    model = ErnieForTokenClassification.from_pretrained(
-        "ernie-1.0", num_classes=num_classes)
-    model = paddle.DataParallel(model)
-    tokenizer = ErnieTokenizer.from_pretrained("ernie-1.0")
+    model = BertForTokenClassification.from_pretrained(
+        "bert-base-chinese", num_labels=num_classes)
+    model = torch.nn.DataParallel(model)
+    tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
     criterion = BCELossForDuIE()
 
     # Loads dataset.
     train_dataset = DuIEDataset.from_file(
         os.path.join(args.data_path, 'train_data.json'), tokenizer,
         args.max_seq_length, True)
-    train_batch_sampler = paddle.io.DistributedBatchSampler(
-        train_dataset, batch_size=args.batch_size, shuffle=True, drop_last=True)
+    train_sampler = torch.utils.data.RandomSampler(
+        train_dataset)
     collator = DataCollator()
     train_data_loader = DataLoader(
         dataset=train_dataset,
-        batch_sampler=train_batch_sampler,
-        collate_fn=collator,
-        return_list=True)
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        collate_fn=collator)
     eval_file_path = os.path.join(args.data_path, 'dev_data.json')
     test_dataset = DuIEDataset.from_file(eval_file_path, tokenizer,
                                          args.max_seq_length, True)
-    test_batch_sampler = paddle.io.BatchSampler(
-        test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=True)
+    test_sampler = torch.utils.data.SequentialSampler(
+        test_dataset)
     test_data_loader = DataLoader(
         dataset=test_dataset,
-        batch_sampler=test_batch_sampler,
-        collate_fn=collator,
-        return_list=True)
+        batch_size=args.batch_size,
+        sampler=test_sampler,
+        collate_fn=collator)
 
-    # Defines learning rate strategy.
-    steps_by_epoch = len(train_data_loader)
-    num_training_steps = steps_by_epoch * args.num_train_epochs
-    lr_scheduler = LinearDecayWithWarmup(args.learning_rate, num_training_steps,
-                                         args.warmup_ratio)
     # Generate parameter names needed to perform weight decay.
     # All bias and LayerNorm parameters are excluded.
     decay_params = [
         p.name for n, p in model.named_parameters()
         if not any(nd in n for nd in ["bias", "norm"])
     ]
-    optimizer = paddle.optimizer.AdamW(
-        learning_rate=lr_scheduler,
-        parameters=model.parameters(),
-        weight_decay=args.weight_decay,
-        apply_decay_param_fun=lambda x: x in decay_params)
-
+    optimizer = torch.optim.AdamW(params=model.parameters(), lr=args.learning_rate)
+    # Defines learning rate strategy.
+    steps_by_epoch = len(train_data_loader)
+    num_training_steps = steps_by_epoch * args.num_train_epochs
+    num_warmup_steps = int(args.warmup_ratio * num_training_steps)
+    lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps)
+    if args.device == "cuda":
+        model.to(device="cuda:0")
+    else:
+        model.to(device="cpu")
     # Starts training.
     global_step = 0
     logging_steps = 50
-    save_steps = 10000
+    save_steps = 1000
     tic_train = time.time()
     for epoch in range(args.num_train_epochs):
-        print("\n=====start training of %d epochs=====" % epoch)
+        print("\n=====开始训练第 %d 个epochs=====" % epoch)
         tic_epoch = time.time()
         model.train()
-        for step, batch in enumerate(train_data_loader):
-            print(f"训练第{step}个step")
+        for step, batch in tqdm(enumerate(train_data_loader), desc="开始训练"):
             input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
-            logits = model(input_ids=input_ids)
+            if args.device == "cuda":
+                input_ids = torch.tensor(input_ids,dtype=torch.int64, device="cuda:0")
+                seq_lens = torch.tensor(seq_lens,dtype=torch.int64, device="cuda:0")
+                tok_to_orig_start_index = torch.tensor(tok_to_orig_start_index,dtype=torch.int64, device="cuda:0")
+                tok_to_orig_end_index = torch.tensor(tok_to_orig_end_index,dtype=torch.int64, device="cuda:0")
+                labels = torch.tensor(labels,dtype=torch.float32, device="cuda:0")
+            output = model(input_ids=input_ids)
+            logits = output['logits']
             mask = (input_ids != 0).logical_and((input_ids != 1)).logical_and(
                 (input_ids != 2))
             loss = criterion(logits, labels, mask)
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
-            optimizer.clear_grad()
-            loss_item = loss.numpy().item()
+            optimizer.zero_grad()
+            loss_item = loss.cpu().item()
             global_step += 1
 
             if global_step % logging_steps == 0 and rank == 0:
                 print(
-                    "epoch: %d / %d, steps: %d / %d, loss: %f, speed: %.2f step/s"
+                    "\nepoch: %d / %d, steps: %d / %d, loss: %f, speed: %.2f step/s"
                     % (epoch, args.num_train_epochs, step, steps_by_epoch,
                        loss_item, logging_steps / (time.time() - tic_train)))
                 tic_train = time.time()
@@ -239,7 +252,7 @@ def do_train():
                       (100 * precision, 100 * recall, 100 * f1))
                 print("saving checkpoing model_%d.pdparams to %s " %
                       (global_step, args.output_dir))
-                paddle.save(model.state_dict(),
+                torch.save(model.state_dict(),
                             os.path.join(args.output_dir,
                                          "model_%d.pdparams" % global_step))
                 model.train()  # back to train mode
@@ -256,14 +269,14 @@ def do_train():
                                          eval_file_path, "eval")
         print("precision: %.2f\t recall: %.2f\t f1: %.2f\t" %
               (100 * precision, 100 * recall, 100 * f1))
-        paddle.save(model.state_dict(),
+        torch.save(model.state_dict(),
                     os.path.join(args.output_dir,
                                  "model_%d.pdparams" % global_step))
         print("\n=====training complete=====")
 
 
 def do_predict():
-    paddle.set_device(args.device)
+    torch.device(args.device)
 
     # Reads label_map.
     label_map_path = os.path.join(args.data_path, "predicate2id.json")
@@ -274,16 +287,16 @@ def do_predict():
     num_classes = (len(label_map.keys()) - 2) * 2 + 2
 
     # Loads pretrained model ERNIE
-    model = ErnieForTokenClassification.from_pretrained(
-        "ernie-1.0", num_classes=num_classes)
-    tokenizer = ErnieTokenizer.from_pretrained("ernie-1.0")
+    model = BertForTokenClassification.from_pretrained(
+        "bert-base-chinese", num_classes=num_classes)
+    tokenizer = BertTokenizer.from_pretrained("bert-base-chinese")
     criterion = BCELossForDuIE()
 
     # Loads dataset.
     test_dataset = DuIEDataset.from_file(args.predict_data_file, tokenizer,
                                          args.max_seq_length, True)
     collator = DataCollator()
-    test_batch_sampler = paddle.io.BatchSampler(
+    test_batch_sampler = torch.utils.data.BatchSampler(
         test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=True)
     test_data_loader = DataLoader(
         dataset=test_dataset,
@@ -296,7 +309,7 @@ def do_predict():
             os.path.isfile(args.init_checkpoint)):
         sys.exit("wrong directory: init checkpoints {} not exist".format(
             args.init_checkpoint))
-    state_dict = paddle.load(args.init_checkpoint)
+    state_dict = torch.load(args.init_checkpoint)
     model.set_dict(state_dict)
 
     # Does predictions.
