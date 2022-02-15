@@ -216,7 +216,7 @@ def do_train():
         print("\n=====开始训练第 %d 个epochs=====" % epoch)
         tic_epoch = time.time()
         model.train()
-        for step, batch in tqdm(enumerate(train_data_loader), desc="开始训练"):
+        for step, batch in tqdm(enumerate(train_data_loader), desc="开始训练",mininterval=500):
             input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
             if args.device == "cuda":
                 input_ids = torch.tensor(input_ids,dtype=torch.int64, device="cuda:0")
