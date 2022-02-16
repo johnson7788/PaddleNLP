@@ -116,6 +116,7 @@ def evaluate(model, criterion, data_loader, file_path, mode):
     eval_steps = 0
     formatted_outputs = []
     current_idx = 0
+    # 逐个batch的预测
     for batch in tqdm(data_loader, total=len(data_loader)):
         eval_steps += 1
         input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
