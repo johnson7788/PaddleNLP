@@ -104,7 +104,7 @@ class ChineseAndPunctuationExtractor(object):
             except:
                 raise ValueError()
                 pass  # A narrow python build, so can't use chars > 65535 without surrogate pairs!
-
+        # RE: '[⺀-⺙⺛-⻳⼀-⿕々〇〡-〩〸-〺〻㐀-䶵一-鿃豈-鶴侮-頻並-龎𠀀-𪛖丽-𪘀。？！，、；：「」『』‘’“”（）〔〕【】—…–．《》〈〉―－ !-/:-@[-`{-~]'
         RE = '[%s]' % ''.join(L)
         # print('RE:', RE.encode('utf-8'))
         return re.compile(RE, re.UNICODE)
