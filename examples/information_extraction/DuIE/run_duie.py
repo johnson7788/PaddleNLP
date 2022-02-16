@@ -81,12 +81,24 @@ def set_random_seed(seed):
 @torch.no_grad()
 def evaluate(model, criterion, data_loader, file_path, mode):
     """
-    mode eval:
+        模型评估:
     eval on development set and compute P/R/F1, called between training.
     mode predict:
     eval on development / test set, then write predictions to \
         predict_test.json and predict_test.json.zip \
         under args.data_path dir for later submission or evaluation.
+    :param model:
+    :type model:
+    :param criterion:
+    :type criterion:
+    :param data_loader:
+    :type data_loader:
+    :param file_path:
+    :type file_path:
+    :param mode:
+    :type mode:
+    :return:
+    :rtype:
     """
     example_all = []
     with open(file_path, "r", encoding="utf-8") as fp:
@@ -95,7 +107,10 @@ def evaluate(model, criterion, data_loader, file_path, mode):
     id2spo_path = os.path.join(os.path.dirname(file_path), "id2spo.json")
     with open(id2spo_path, 'r', encoding='utf8') as fp:
         id2spo = json.load(fp)
-
+    # id2spo 里面包含，头实体，尾实体，和关系
+    #  'predicate' = {list: 57} ['empty', 'empty', '注册资本', '作者', '所属专辑', '歌手', '邮政编码', '主演', '上映时间', '上映时间', '饰演', '饰演', '国籍', '成立日期', '毕业院校', '作曲', '作词', '编剧', '导演', '面积', '占地面积', '总部地点', '制片人', '嘉宾', '简称', '主持人', '获奖', '获奖', '获奖', '获奖', '海拔', '出品公司', '配音', '配音', '所在城市', '号', '主角', '创始人
+    #  'subject_type' = {list: 57} ['empty', 'empty', '企业', '图书作品', '歌曲', '歌曲', '行政区', '影视作品', '影视作品', '影视作品', '娱乐人物', '娱乐人物', '人物', '机构', '人物', '歌曲', '歌曲', '影视作品', '影视作品', '行政区', '机构', '企业', '影视作品', '电视综艺', '机构', '电视综艺', '娱乐人物', '娱乐人物', '娱乐人物', '娱乐人物', '地点', '影视作品', '娱乐人物', '娱乐人物', '景点', '
+    #  'object_type' = {list: 57} ['empty', 'empty', 'Number', '人物', '音乐专辑', '人物', 'Text', '人物', 'Date_@value', '地点_inArea', '人物_@value', '影视作品_inWork', '国家', 'Date', '学校', '人物', '人物', '人物', '人物', 'Number', 'Number', '地点', '人物', '人物', 'Text', '人物', '奖项_@value', '作品_inWork', 'Date_onDate',
     model.eval()
     loss_all = 0
     eval_steps = 0
@@ -121,6 +136,7 @@ def evaluate(model, criterion, data_loader, file_path, mode):
         seq_len_batch = seq_lens.cpu()
         tok_to_orig_start_index_batch = tok_to_orig_start_index.cpu()
         tok_to_orig_end_index_batch = tok_to_orig_end_index.cpu()
+        # 把logits解码成spo三元组格式，放入预测结果formatted_outputs中
         formatted_outputs.extend(
             decoding(example_all[current_idx:current_idx + len(logits)], id2spo,
                      logits_batch, seq_len_batch, tok_to_orig_start_index_batch,
@@ -220,7 +236,7 @@ def do_train():
             input_ids, seq_lens, tok_to_orig_start_index, tok_to_orig_end_index, labels = batch
             if args.device == "cuda":
                 input_ids = torch.tensor(input_ids,dtype=torch.int64, device="cuda:0")
-                seq_lens = torch.tensor(seq_lens,dtype=torch.int64, device="cuda:0")
+                seq_lens = torch.tensor(seq_lens,dtype=torch.int64, device="cuda:0")  # 每个样本的序列长度
                 tok_to_orig_start_index = torch.tensor(tok_to_orig_start_index,dtype=torch.int64, device="cuda:0")
                 tok_to_orig_end_index = torch.tensor(tok_to_orig_end_index,dtype=torch.int64, device="cuda:0")
                 labels = torch.tensor(labels,dtype=torch.float32, device="cuda:0")

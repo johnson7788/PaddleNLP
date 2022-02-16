@@ -24,8 +24,20 @@ import numpy as np
 def find_entity(text_raw, id_, predictions, tok_to_orig_start_index,
                 tok_to_orig_end_index):
     """
-    retrieval entity mention under given predicate id for certain prediction.
-    this is called by the "decoding" func.
+    在给定的predicate id下检索实体提及的某些预测。
+    这是由 "解码 "函数调用的。
+    :param text_raw:
+    :type text_raw:
+    :param id_:
+    :type id_:
+    :param predictions:
+    :type predictions:
+    :param tok_to_orig_start_index:
+    :type tok_to_orig_start_index:
+    :param tok_to_orig_end_index:
+    :type tok_to_orig_end_index:
+    :return:
+    :rtype:
     """
     entity_list = []
     for i in range(len(predictions)):
@@ -45,30 +57,45 @@ def find_entity(text_raw, id_, predictions, tok_to_orig_start_index,
 def decoding(example_batch, id2spo, logits_batch, seq_len_batch,
              tok_to_orig_start_index_batch, tok_to_orig_end_index_batch):
     """
+        模型输出到spo三元组格式
     model output logits -> formatted spo (as in data set file)
+    :param example_batch:   原始数据, [batch_size, dict(text, spo_list)]
+    :type example_batch:
+    :param id2spo:  spo列表，里面包含predict关系，subject实体类型，object实体类型
+    :type id2spo:
+    :param logits_batch:  [batch_size, seq_len, num_labels]
+    :type logits_batch:  模型预测的logits
+    :param seq_len_batch:   每个样本的原始的长度 tensor([126,  61,  84,  39,  58,  48,  81, 105])
+    :type seq_len_batch:
+    :param tok_to_orig_start_index_batch: [batch_size, seq_len], 每个token的原始的开始位置
+    :type tok_to_orig_start_index_batch:
+    :param tok_to_orig_end_index_batch:  [batch_size, seq_len]， 每个token的原始的结束位置
+    :type tok_to_orig_end_index_batch:
+    :return:
+    :rtype:
     """
     formatted_outputs = []
     for (i, (example, logits, seq_len, tok_to_orig_start_index, tok_to_orig_end_index)) in \
             enumerate(zip(example_batch, logits_batch, seq_len_batch, tok_to_orig_start_index_batch, tok_to_orig_end_index_batch)):
-
-        logits = logits[1:seq_len +
-                        1]  # slice between [CLS] and [SEP] to get valid logits
+        # 去掉CLS和SEP的logits
+        logits = logits[1:seq_len + 1]  # slice between [CLS] and [SEP] to get valid logits
+        # 概率大于0.5的为1，小于0.5的为0
         logits[logits >= 0.5] = 1
         logits[logits < 0.5] = 0
-        tok_to_orig_start_index = tok_to_orig_start_index[1:seq_len + 1]
+        tok_to_orig_start_index = tok_to_orig_start_index[1:seq_len + 1]          #获取原始的序列的长度
         tok_to_orig_end_index = tok_to_orig_end_index[1:seq_len + 1]
         predictions = []
         for token in logits:
-            predictions.append(np.argwhere(token == 1).tolist())
+            predictions.append(np.argwhere(token == 1).tolist())   # token是每个token的可能的标签，形状是[num_labels]
 
-        # format predictions into example-style output
+        # 将预测结果格式化为实例式输出
         formatted_instance = {}
-        text_raw = example['text']
-        complex_relation_label = [8, 10, 26, 32, 46]
+        text_raw = example['text']   #eg: '《步步惊心》改编自著名作家桐华的同名清穿小说《甄嬛传》改编自流潋紫所著的同名小说电视剧《何以笙箫默》改编自顾漫同名小说《花千骨》改编自fresh果果同名小说《裸婚时代》是月影兰析创作的一部情感小说《琅琊榜》是根据海宴同名网络小说改编电视剧《宫锁心玉》，又名《宫》《雪豹》，该剧改编自网络小说《特战先驱》《我是特种兵》由红遍网络的小说《最后一颗子弹留给我》改编电视剧《来不及说我爱你》改编自匪我思存同名小说《来不及说我爱你》'
+        complex_relation_label = [8, 10, 26, 32, 46]   # 写死了？
         complex_relation_affi_label = [9, 11, 27, 28, 29, 33, 47]
 
-        # flatten predictions then retrival all valid subject id
-        flatten_predictions = []
+        # 扁平化预测，然后检索出所有有效的subject id
+        flatten_predictions = []  # seq_len长度
         for layer_1 in predictions:
             for layer_2 in layer_1:
                 if layer_2:
@@ -78,9 +105,10 @@ def decoding(example_batch, id2spo, logits_batch, seq_len_batch,
                     flatten_predictions.append(0)
         subject_id_list = []
         for cls_label in list(set(flatten_predictions)):
+            # 要预测出一对label，才放进subject_id_list中
             if 1 < cls_label <= 56 and (cls_label + 55) in flatten_predictions:
                 subject_id_list.append(cls_label)
-        subject_id_list = list(set(subject_id_list))
+        subject_id_list = list(set(subject_id_list))  # subject_id_list可能为空，就是没预测到一对label
 
         # fetch all valid spo by subject id
         spo_list = []
